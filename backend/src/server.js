@@ -156,7 +156,8 @@ async function requireAuth(req, res, next) {
 function requireAdmin(req, res, next) {
   const allow = (process.env.ADMIN_UIDS || '').split(',').map(x => x.trim()).filter(Boolean);
   const principal = req.auth?.uid || req.auth?.sub;
-  if (!principal || !allow.includes(principal)) return res.status(403).json({ error: 'Admin access required.' });
+  const phone = req.user?.phoneNumber;
+  if (!principal || !(allow.includes(principal) || (phone && allow.includes(phone)))) return res.status(403).json({ error: 'Admin access required.' });
   next();
 }
 
