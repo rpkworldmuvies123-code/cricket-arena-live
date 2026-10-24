@@ -29,22 +29,22 @@ export default function App() {
   const recaptchaRef = useRef(null);
 
   useEffect(() => {
-    if (!auth) return;
-    return onAuthStateChanged(auth, async (current) => {
-      setUser(current);
-      if (current) {
-        try {
-          const token = await current.getIdToken();
-          const res = await fetch(API + '/profile', { headers: { Authorization: 'Bearer ' + token } });
-          if (res.ok) setProfile(await res.json());
-          await loadWallet(token);
-        } catch { /* API status appears in the relevant panel. */ }
-      } else {
-        setProfile(null);
-        setWallet(null);
-        setTransactions([]);
+    const token = window.localStorage.getItem('cricketArenaSession');
+    if (!token) return;
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      if (!payload.exp || payload.exp * 1000 <= Date.now()) {
+        window.localStorage.removeItem('cricketArenaSession');
+        return;
       }
-    });
+      setUser({
+        id: payload.sub,
+        phoneNumber: payload.phoneNumber,
+        getIdToken: async () => window.localStorage.getItem('cricketArenaSession')
+      });
+    } catch {
+      window.localStorage.removeItem('cricketArenaSession');
+    }
   }, []);
 
   useEffect(() => {
