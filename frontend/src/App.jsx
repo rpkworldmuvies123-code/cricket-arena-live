@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, RecaptchaVerifier, signInWithPhoneNumber, signOut } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth, firebaseConfigured } from './firebase';
 import {
   Activity, ArrowDownToLine, ArrowLeft, ArrowUpFromLine, Bell, CalendarDays,
@@ -90,28 +90,42 @@ export default function App() {
   }
 
   async function sendOtp() {
-    if (!auth || !firebaseConfigured) { setNotice('Phone login is not configured yet. Add Firebase web keys in frontend environment settings.'); return; }
-    if (!/^\+[1-9]\d{7,14}$/.test(phone.trim())) { setNotice('Enter your phone with country code, for example +91XXXXXXXXXX.'); return; }
+    if (!auth  async function sendOtp() {
+    if (!API) { setNotice('Backend API URL is missing.'); return; }
+    const mobile = phone.trim().replace(/^\\+91\\s*/, '').replace(/[\\s()-]/g, '');
+    if (!/^[6-9]\\d{9}$/.test(mobile)) { setNotice('Enter a valid 10-digit Indian mobile number.'); return; }
     setLoginBusy(true); setNotice('');
     try {
-      if (!recaptchaRef.current) recaptchaRef.current = new RecaptchaVerifier(auth, 'recaptcha-container', { size: 'invisible' });
-      const result = await signInWithPhoneNumber(auth, phone.trim(), recaptchaRef.current);
-      setConfirmation(result);
-      setNotice('OTP sent. Check your SMS.');
+      const res = await fetch(API + '/auth/otp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobile })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not send OTP.');
+      setConfirmation({ mobile });
+      setNotice(data.message || 'OTP sent. Check your SMS.');
     } catch (e) {
-      setNotice(e?.message || 'Could not send OTP. Check Firebase phone sign-in setup.');
-      try { await recaptchaRef.current?.clear(); } catch {}
-      recaptchaRef.current = null;
+      setNotice(e?.message || 'Could not send OTP. Check backend and Fast2SMS setup.');
     } finally { setLoginBusy(false); }
   }
 
   async function verifyOtp() {
-    if (!confirmation || !/^\d{6}$/.test(otp)) { setNotice('Enter the 6-digit OTP.'); return; }
+    const mobile = confirmation?.mobile;
+    if (!mobile || !/^\\d{4,10}$/.test(otp.trim())) { setNotice('Enter the OTP received by SMS.'); return; }
     setLoginBusy(true);
     try {
-      await confirmation.confirm(otp);
-      setView('profile'); setNotice('Login successful.');
-    } catch { setNotice('OTP is invalid or expired. Request a new code.'); }
+      const res = await fetch(API + '/auth/otp/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobile, otp: otp.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.verified) throw new Error(data.error || 'OTP verification failed.');
+      setNotice('OTP verified. Full login sessions are not enabled yet; the backend must issue a secure session before profile and wallet access.');
+      setConfirmation(null);
+      setOtp('');
+    } catch (e) { setNotice(e?.message || 'OTP invalid, expired, or verification failed.'); }
     finally { setLoginBusy(false); }
   }
 
