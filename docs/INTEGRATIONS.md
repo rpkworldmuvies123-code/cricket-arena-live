@@ -1,11 +1,11 @@
 # Production integration checklist
 
 ## 1. Phone authentication
-- Create a Firebase project and register the web app.
-- Enable Phone provider in Firebase Authentication.
-- Configure authorized domains and Firebase reCAPTCHA requirements.
-- Add frontend `VITE_FIREBASE_*` settings and backend `FIREBASE_SERVICE_ACCOUNT_JSON` secret.
-- Test India (+91) SMS delivery, quotas, abuse protection, and account deletion.
+- Fast2SMS SMS OTP flow is wired to backend `POST /api/auth/otp/send` and `POST /api/auth/otp/verify`.
+- Set backend `FAST2SMS_API_KEY`, `FAST2SMS_OTP_ID`, `AUTH_MODE=fast2sms`, and `JWT_SECRET` (random, at least 32 characters). Never place the API key in frontend variables or GitHub.
+- The login form calls the backend and stores the short-lived issued bearer token in browser local storage. For higher-risk production accounts, prefer secure HttpOnly cookies and add session revocation/rotation.
+- Confirm the Fast2SMS OTP template ID is active and your account is authorized to send OTPs. Test India (+91) delivery, quotas, abuse protection, and account deletion.
+- Configure MongoDB Atlas and the exact frontend origin in `FRONTEND_URL`; profile/wallet routes require database access.
 
 ## 2. Cricket live scores and commentary
 - Select a cricket data vendor that expressly permits live score and commentary display on your website.
