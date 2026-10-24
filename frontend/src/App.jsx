@@ -74,7 +74,7 @@ export default function App() {
   }
 
   async function loadWallet(tokenOverride) {
-    const token = tokenOverride || await auth?.currentUser?.getIdToken();
+    const token = tokenOverride || window.localStorage.getItem('cricketArenaSession') || (auth?.currentUser ? await auth.currentUser.getIdToken() : null);
     if (!token) return;
     try {
       const res = await fetch(API + '/wallet', { headers: { Authorization: 'Bearer ' + token } });
