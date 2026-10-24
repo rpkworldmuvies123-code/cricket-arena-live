@@ -131,7 +131,7 @@ export default function App() {
     if (!user) { setView('login'); return; }
     setBusy(true);
     try {
-      const token = await user.getIdToken();
+      const token = window.localStorage.getItem('cricketArenaSession') || await user.getIdToken();
       const res = await fetch(API + path, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       const data = await res.json();
       setNotice(data.error || (res.ok ? label : label + ' could not be completed.'));
