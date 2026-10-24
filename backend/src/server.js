@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import mongoose from 'mongoose';
 import admin from 'firebase-admin';
+import { randomInt, createHash } from 'node:crypto';
 
 const app = express();
 app.disable('x-powered-by');
@@ -43,10 +44,77 @@ const ledgerSchema = new mongoose.Schema({
 });
 const Ledger = mongoose.models.Ledger || mongoose.model('Ledger', ledgerSchema);
 
+// Fast2SMS hosted OTP verification: the API key remains server-side.
+// In production configure rate limits on the deployed service as well as per-IP rate limits here.
+const otpSendLimiter = rateLimit({ windowMs: 10 * 60_000, limit: 5, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many OTP requests. Wait 10 minutes and try again.' } });
+const otpVerifyLimiter = rateLimit({ windowMs: 10 * 60_000, limit: 10, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many verification attempts. Wait 10 minutes and try again.' } });
+const otpConfigured = () => Boolean(process.env.FAST2SMS_API_KEY && process.env.FAST2SMS_OTP_ID);
+
+async function fast2sms(path, payload) {
+  const response = await fetch('https://www.fast2sms.com/dev/otp/' + path, {
+    method: 'POST',
+    headers: {
+      Authorization: process.env.FAST2SMS_API_KEY,
+      'Content-Type': 'application/json',
+      Accept: 'application/json'
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10000)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.return === false) {
+    const error = new Error(data.message || data.error || 'Fast2SMS request failed');
+    error.status = response.status >= 400 && response.status < 500 ? 400 : 502;
+    throw error;
+  }
+  return data;
+}
+
+app.get('/api/health', (_req, res) => res.json({
+  ok: true,
+  service: 'cricket-arena-live-api',
+  database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+  auth: admin.apps.length ? 'firebase-configured' : otpConfigured() ? 'fast2sms-configured' : 'not-configured',
+  otp: otpConfigured() ? 'fast2sms-configured' : 'not-configured',
+  cricketFeed: process.env.CRICKET_API_BASE_URL && process.env.CRICKET_API_KEY ? 'configured' : 'not-configured'
+}));
+
+app.post('/api/auth/otp/send', otpSendLimiter, async (req, res) => {
+  if (!otpConfigured()) return res.status(503).json({ error: 'Fast2SMS not configured. Set FAST2SMS_API_KEY and FAST2SMS_OTP_ID in backend environment.' });
+  const mobile = String(req.body.mobile || '').replace(/^\+91/, '').replace(/\D/g, '');
+  if (!/^[6-9]\d{9}$/.test(mobile)) return res.status(400).json({ error: 'Enter a valid 10-digit Indian mobile number.' });
+  try {
+    const result = await fast2sms('send', { otp_id: process.env.FAST2SMS_OTP_ID, mobile, otp_expiry: 5, otp_length: 6 });
+    res.json({ ok: true, message: 'OTP request sent. Check your SMS.', requestId: result.request_id || null });
+  } catch (e) {
+    console.error('Fast2SMS send failed:', e.message);
+    res.status(e.status || 502).json({ error: e.status === 400 ? e.message : 'Could not send OTP. Check Fast2SMS account and template configuration.' });
+  }
+});
+
+app.post('/api/auth/otp/verify', otpVerifyLimiter, async (req, res) => {
+  if (!otpConfigured()) return res.status(503).json({ error: 'Fast2SMS not configured. Set FAST2SMS_API_KEY and FAST2SMS_OTP_ID in backend environment.' });
+  const mobile = String(req.body.mobile || '').replace(/^\+91/, '').replace(/\D/g, '');
+  const otp = String(req.body.otp || '').trim();
+  if (!/^[6-9]\d{9}$/.test(mobile)) return res.status(400).json({ error: 'Enter a valid 10-digit Indian mobile number.' });
+  if (!/^\d{4,10}$/.test(otp)) return res.status(400).json({ error: 'Enter the OTP received by SMS.' });
+  try {
+    const result = await fast2sms('verify', { mobile, otp });
+    if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: 'Database unavailable.' });
+    // Fast2SMS confirms the OTP; this endpoint does not silently create a login session.
+    // Configure a server-side session/JWT implementation before allowing protected actions.
+    const user = await User.findOne({ phoneNumber: '+91' + mobile }).select('_id phoneNumber displayName status');
+    res.json({ ok: true, verified: true, message: 'OTP verified successfully.', account: user ? { exists: true, status: user.status } : { exists: false }, providerRequestId: result.request_id || null, nextStep: 'Implement server-side session issuance after successful verification before enabling authenticated wallet/profile actions.' });
+  } catch (e) {
+    console.error('Fast2SMS verify failed:', e.message);
+    res.status(e.status || 502).json({ error: e.status === 400 ? 'OTP invalid, expired, or already used.' : 'Could not verify OTP. Try again.' });
+  }
+});
+
 async function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
   if (!header.startsWith('Bearer ') || !admin.apps.length) {
-    return res.status(401).json({ error: 'Phone authentication is not configured or token is missing.' });
+    return res.status(401).json({ error: 'Authentication is not configured or token is missing.' });
   }
   try {
     req.auth = await admin.auth().verifyIdToken(header.slice(7));
@@ -66,14 +134,6 @@ function requireAdmin(req, res, next) {
   if (!req.auth || !allow.includes(req.auth.uid)) return res.status(403).json({ error: 'Admin access required.' });
   next();
 }
-
-app.get('/api/health', (_req, res) => res.json({
-  ok: true,
-  service: 'cricket-arena-live-api',
-  database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-  auth: admin.apps.length ? 'configured' : 'not-configured',
-  cricketFeed: process.env.CRICKET_API_BASE_URL && process.env.CRICKET_API_KEY ? 'configured' : 'not-configured'
-}));
 
 app.get('/api/cricket/live', async (_req, res) => {
   const base = process.env.CRICKET_API_BASE_URL;
