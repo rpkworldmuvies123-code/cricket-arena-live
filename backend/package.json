@@ -17,6 +17,7 @@
     "helmet": "^8.0.0",
     "express-rate-limit": "^7.5.0",
     "mongoose": "^8.9.5",
-    "firebase-admin": "^13.0.2"
+    "firebase-admin": "^13.0.2",
+    "jsonwebtoken": "^9.0.2"
   }
 }
