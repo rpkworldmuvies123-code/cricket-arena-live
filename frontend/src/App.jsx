@@ -90,24 +90,19 @@ export default function App() {
   }
 
   async function sendOtp() {
-    if (!auth  async function sendOtp() {
-    if (!API) { setNotice('Backend API URL is missing.'); return; }
     const mobile = phone.trim().replace(/^\\+91\\s*/, '').replace(/[\\s()-]/g, '');
     if (!/^[6-9]\\d{9}$/.test(mobile)) { setNotice('Enter a valid 10-digit Indian mobile number.'); return; }
     setLoginBusy(true); setNotice('');
     try {
       const res = await fetch(API + '/auth/otp/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mobile })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mobile })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Could not send OTP.');
       setConfirmation({ mobile });
       setNotice(data.message || 'OTP sent. Check your SMS.');
-    } catch (e) {
-      setNotice(e?.message || 'Could not send OTP. Check backend and Fast2SMS setup.');
-    } finally { setLoginBusy(false); }
+    } catch (e) { setNotice(e?.message || 'Could not send OTP. Check backend and Fast2SMS setup.'); }
+    finally { setLoginBusy(false); }
   }
 
   async function verifyOtp() {
@@ -116,15 +111,18 @@ export default function App() {
     setLoginBusy(true);
     try {
       const res = await fetch(API + '/auth/otp/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mobile, otp: otp.trim() })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mobile, otp: otp.trim() })
       });
       const data = await res.json();
-      if (!res.ok || !data.verified) throw new Error(data.error || 'OTP verification failed.');
-      setNotice('OTP verified. Full login sessions are not enabled yet; the backend must issue a secure session before profile and wallet access.');
+      if (!res.ok || !data.token || !data.user) throw new Error(data.error || 'OTP verification failed.');
+      window.localStorage.setItem('cricketArenaSession', data.token);
+      setUser({ phoneNumber: data.user.phoneNumber, id: data.user.id, getIdToken: async () => data.token });
+      setProfile(data.user);
       setConfirmation(null);
       setOtp('');
+      setView('profile');
+      setNotice('Login successful.');
+      await loadWallet(data.token);
     } catch (e) { setNotice(e?.message || 'OTP invalid, expired, or verification failed.'); }
     finally { setLoginBusy(false); }
   }
